@@ -1,0 +1,110 @@
+
+services:
+  cache:
+    image: redis:latest
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server --save 20 1 --loglevel warning
+    networks:
+      - case-net
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:6.1.1
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - case-net
+
+  kafka:
+    image: confluentinc/cp-kafka:6.1.1
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - '9092:9092'
+    expose:
+      - '29092'
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1'
+      KAFKA_MIN_INSYNC_REPLICAS: '1'
+    networks:
+      - case-net
+
+  init-kafka:
+    image: confluentinc/cp-kafka:6.1.1
+    depends_on:
+      - kafka
+    entrypoint: [ '/bin/sh', '-c' ]
+    env_file:
+      - .env
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:29092 --list
+
+      echo -e 'Creating kafka topics'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic $TOPIC1 --replication-factor 1 --partitions 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic $TOPIC2 --replication-factor 1 --partitions 1
+      echo -e 'Successfully created the following topics:'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
+    networks:
+      - case-net
+
+  mongo:
+    image: mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    env_file:
+      - .env
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USR}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PSS}
+      MONGO_INITDB_DATABASE: ${MONGO_DB}
+    volumes:
+      - ./init-mongo-db-with-collections.js:/docker-entrypoint-initdb.d/init-mongo-db-with-collections.js:ro
+    networks:
+      - case-net
+
+  entityservice:
+    build:
+      context: ./entityservice
+      dockerfile: Dockerfile
+    ports:
+      - "8010:8010"
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - mongo
+    env_file:
+      - .env
+    networks:
+      - case-net
+
+  clientservice:
+    build:
+      context: ./clientservice
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - cache
+      - entityservice
+    env_file:
+      - .env
+    networks:
+      - case-net
+
+networks:
+  case-net:
+    driver: bridge
