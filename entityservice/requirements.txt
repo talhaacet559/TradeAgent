@@ -1,0 +1,7 @@
+fastapi[standard]
+uvicorn[standard]
+motor
+prometheus-client
+aiokafka
+aiohttp
+psutil
